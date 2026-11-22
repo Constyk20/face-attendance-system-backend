@@ -1,0 +1,10 @@
+Flask==3.0.3
+Flask-CORS==5.0.0
+pymongo==4.9.1
+python-dotenv==1.0.1
+PyJWT==2.9.0
+bcrypt==4.2.0
+opencv-python==4.10.0.84 
+deepface==0.0.93 
+numpy==1.26.4
+gunicorn==21.2.0
