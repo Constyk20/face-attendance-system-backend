@@ -48,10 +48,16 @@ def create_app():
     app.config.from_object(Config)  # includes MAX_CONTENT_LENGTH (-> 413)
 
     CORS(
-        app,
-        resources={r"/api/*": {"origins": Config.FRONTEND_ORIGINS}},
-        supports_credentials=True,
-    )
+    app,
+    resources={
+        r"/api/*": {
+            "origins": "*",
+            "allow_headers": ["Content-Type", "Authorization"],
+            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        }
+    },
+    supports_credentials=False,
+)
 
     @app.before_request
     def require_json_body():
