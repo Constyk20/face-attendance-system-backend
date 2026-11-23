@@ -63,32 +63,25 @@ class Config:
     MONGODB_SOCKET_TIMEOUT_MS = _get_int("MONGODB_SOCKET_TIMEOUT_MS", 20000, 1000)
     MONGODB_APP_NAME = os.getenv("MONGODB_APP_NAME", "face-attendance-api")
 
-    # ----- Request / image limits -------------------------------------
-    # Whole request body. Registration sends up to 8 images, so keep this generous.
-    MAX_CONTENT_LENGTH = _get_int("MAX_CONTENT_LENGTH", 12 * 1024 * 1024, 1024)
-    # One base64 image string (about 3 MB of base64 is roughly a 2.2 MB JPEG).
-    MAX_IMAGE_B64_CHARS = _get_int("MAX_IMAGE_B64_CHARS", 3_000_000, 1000)
-    MAX_IMAGE_DIMENSION = _get_int("MAX_IMAGE_DIMENSION", 4096, 64)
-    MAX_IMAGE_PIXELS = _get_int("MAX_IMAGE_PIXELS", 16_000_000, 10_000)
-    # Frames are downscaled to this longest side before face detection.
-    DETECT_MAX_SIDE = _get_int("DETECT_MAX_SIDE", 640, 160)
+    # ----- Request limits -----------------------------------------------
+    # Face data is a handful of 128-number vectors, so requests are tiny.
+    MAX_CONTENT_LENGTH = _get_int("MAX_CONTENT_LENGTH", 256 * 1024, 1024)
 
-    # ----- Face pipeline ----------------------------------------------
-    PRELOAD_MODEL = _get_bool("PRELOAD_MODEL", True)
-    # Facenet cosine distance. Lower means more similar. Calibrate before changing.
-    FACE_DISTANCE_THRESHOLD = _get_float("FACE_DISTANCE_THRESHOLD", 0.40, 0.01)
+    # ----- Face matching -------------------------------------------------
+    # Faces are detected and embedded IN THE BROWSER (YuNet + SFace, ONNX Runtime
+    # Web). This tag is stored with every embedding and must match the frontend's
+    # EMBEDDING_MODEL. Only embeddings with this tag are ever compared.
+    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sface-yunet-v1").strip()
+    EMBEDDING_DIM = 128
+    # SFace cosine DISTANCE (1 - cosine similarity). Lower = more similar.
+    # Measured with the browser pipeline on 300 labelled pairs: same person <= 0.40,
+    # different people >= 0.66. 0.50 sits between them; OpenCV's published SFace
+    # limit is 0.637 (similarity 0.363) and is deliberately NOT used because a
+    # school attendance system should prefer a missed face over a wrong student.
+    # The old Facenet value (0.40) must not be reused: the scales differ.
+    FACE_DISTANCE_THRESHOLD = _get_float("FACE_DISTANCE_THRESHOLD", 0.50, 0.01)
     # Reject when the two best different students are closer than this.
     FACE_AMBIGUITY_MARGIN = _get_float("FACE_AMBIGUITY_MARGIN", 0.05, 0.0)
-    FACE_MIN_SIZE = _get_int("FACE_MIN_SIZE", 80, 20)
-    FACE_BLUR_MIN = _get_float("FACE_BLUR_MIN", 20.0, 0.0)
-    FACE_MIN_BRIGHTNESS = _get_float("FACE_MIN_BRIGHTNESS", 25.0, 0.0)
-    FACE_MAX_BRIGHTNESS = _get_float("FACE_MAX_BRIGHTNESS", 235.0, 1.0)
-    FACE_EDGE_MARGIN_RATIO = _get_float("FACE_EDGE_MARGIN_RATIO", 0.01, 0.0)
-    FACE_CROP_PADDING = _get_float("FACE_CROP_PADDING", 0.0, 0.0)
-    FACE_ALIGN = _get_bool("FACE_ALIGN", True)
-    # During recognition the largest face is used only if it is at least this many
-    # times wider than the next face. Otherwise the frame is rejected as ambiguous.
-    FACE_DOMINANCE_RATIO = _get_float("FACE_DOMINANCE_RATIO", 1.6, 1.0)
 
     # ----- Attendance / recognition -----------------------------------
     RECOGNITION_MIN_INTERVAL_MS = _get_int("RECOGNITION_MIN_INTERVAL_MS", 700, 0)
@@ -117,8 +110,8 @@ class Config:
                 problems.append("SECRET_KEY is still the insecure default")
             if cls.JWT_SECRET == _INSECURE_DEFAULT:
                 problems.append("JWT_SECRET is still the insecure default")
-        if cls.FACE_MAX_BRIGHTNESS <= cls.FACE_MIN_BRIGHTNESS:
-            problems.append("FACE_MAX_BRIGHTNESS must be greater than FACE_MIN_BRIGHTNESS")
+        if not cls.EMBEDDING_MODEL:
+            problems.append("EMBEDDING_MODEL must not be empty")
         if problems:
             raise RuntimeError(
                 "Unsafe configuration: "

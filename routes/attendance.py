@@ -10,15 +10,14 @@ GET  /api/attendance/<session_id>
 import logging
 from datetime import datetime, timezone
 
-import cv2
 from flask import Blueprint, jsonify, request
 from pymongo.errors import DuplicateKeyError
 
 from config import Config
 from database.db import get_db
 from routes.auth import roles_required
-from services.attendance_service import identify_frame
-from services.face_recognition import FaceError, ModelLoading
+from services.attendance_service import identify_embedding
+from services.face_recognition import FaceError
 from services.session_state import session_state
 from utils import pagination_meta, parse_object_id, parse_pagination
 
@@ -70,13 +69,14 @@ def visible_session_query(user):
     return {"course_id": {"$in": [row["course_id"] for row in rows]}}
 
 
-def public_session(session, course=None):
+def public_session(session, course=None, lecturer_name=None):
     return {
         "id": str(session["_id"]),
         "course_id": str(session.get("course_id", "")),
         "course_code": None if not course else course.get("course_code"),
         "course_title": None if not course else course.get("course_title"),
         "lecturer_id": str(session.get("lecturer_id", "")),
+        "lecturer_name": lecturer_name,
         "status": session.get("status"),
         "started_at": session.get("started_at"),
         "ended_at": session.get("ended_at"),
@@ -222,9 +222,9 @@ def recognize(user):
     if not session["course_active"]:
         return jsonify({"message": "This course is not active"}), 409
 
-    image_value = body.get("image")
-    if not image_value:
-        return jsonify({"message": "An image is required"}), 400
+    embedding_value = body.get("embedding")
+    if embedding_value is None:
+        return jsonify({"message": "Face data is required"}), 400
 
     session_key = str(session_object_id)
     gate = session_state.begin(session_key)
@@ -234,14 +234,9 @@ def recognize(user):
         return _lightweight(busy=True, throttled=True, message="Frames are arriving too fast")
 
     try:
-        outcome = identify_frame(image_value)
-    except FaceError as exc:  # no face, blurry, too large ... safe to show
+        outcome = identify_embedding(embedding_value, body.get("model"))
+    except FaceError as exc:  # malformed data or outdated browser model: safe to show
         return _lightweight(message=str(exc))
-    except ModelLoading as exc:
-        return _lightweight(busy=True, message=str(exc))
-    except (cv2.error, ValueError):
-        log.exception("Frame could not be processed")
-        return jsonify({"message": "The frame could not be processed"}), 400
     finally:
         session_state.finish(session_key)
 
@@ -340,10 +335,22 @@ def list_sessions(user):
             _COURSE_LABEL_FIELDS,
         )
     }
+    lecturers = {
+        item["_id"]: item.get("full_name", "")
+        for item in db.users.find(
+            {"_id": {"$in": list({row["lecturer_id"] for row in sessions if row.get("lecturer_id")})}},
+            {"full_name": 1},
+        )
+    }
     return jsonify(
         {
             "sessions": [
-                public_session(row, courses.get(row.get("course_id"))) for row in sessions
+                public_session(
+                    row,
+                    courses.get(row.get("course_id")),
+                    lecturers.get(row.get("lecturer_id")),
+                )
+                for row in sessions
             ],
             **pagination_meta(page, limit, total),
         }

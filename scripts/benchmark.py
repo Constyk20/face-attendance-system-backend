@@ -1,10 +1,9 @@
 """Benchmark the recognition hot path.
 
 Run from the backend folder:
-    python scripts/benchmark.py                 # matching + decode (no model needed)
-    python scripts/benchmark.py --image me.jpg  # also times a real embedding
+    python scripts/benchmark.py                 # matching (no model: embeddings come from the browser)
     python scripts/benchmark.py --url http://127.0.0.1:5000 --token JWT \
-        --session SESSION_ID --image me.jpg     # also times /recognize end to end
+        --session SESSION_ID                    # also times /recognize end to end
 
 "Old" below is the original algorithm (Python loop of per-record cosine distance,
 one database read per record). "New" is the NumPy matrix. Database time is NOT
@@ -12,7 +11,6 @@ included for the old method, so the real-world gap is larger than shown.
 """
 
 import argparse
-import base64
 import json
 import statistics
 import sys
@@ -26,7 +24,7 @@ import numpy as np
 
 from services.face_matching import build_snapshot, match
 
-DIM = 128  # Facenet
+DIM = 128  # SFace
 
 
 def timeit(fn, runs):
@@ -67,30 +65,16 @@ def bench_matching(samples_per_student=5):
 
         runs = 5 if n >= 10_000 else 15
         old_ms, _ = timeit(lambda: old_match(records, query), runs)
-        new_ms, _ = timeit(lambda: match(snapshot, query, 0.40, 0.05), 50)
+        new_ms, _ = timeit(lambda: match(snapshot, query, 0.50, 0.05), 50)
         print(f"{n:>9} {old_ms:>12.3f} {new_ms:>12.4f} {old_ms / new_ms:>9.0f}x")
 
 
-def bench_embedding(image_path):
-    import cv2
-
-    from services.face_recognition import decode_image, extract_embedding
-
-    raw = Path(image_path).read_bytes()
-    b64 = base64.b64encode(raw).decode()
-    print("\n== Face pipeline on a real image (ms) ==")
-    started = time.perf_counter()
-    image = decode_image(b64)
-    extract_embedding(image, policy="dominant")  # includes one-off model load
-    print(f"first call (loads model): {(time.perf_counter() - started) * 1000:.0f}")
-    median, best = timeit(lambda: extract_embedding(decode_image(b64), "dominant"), 10)
-    print(f"decode + detect + embed : median {median:.0f}  best {best:.0f}")
-
-
-def bench_endpoint(url, token, session, image_path, runs=10):
-    raw = Path(image_path).read_bytes()
+def bench_endpoint(url, token, session, runs=10):
+    rng = np.random.default_rng(1)
+    vector = rng.normal(size=DIM)
+    vector = (vector / np.linalg.norm(vector)).round(6).tolist()
     body = json.dumps(
-        {"session_id": session, "image": base64.b64encode(raw).decode()}
+        {"session_id": session, "embedding": vector, "model": "sface-yunet-v1"}
     ).encode()
 
     def call():
@@ -115,14 +99,11 @@ def bench_endpoint(url, token, session, image_path, runs=10):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image")
     parser.add_argument("--url")
     parser.add_argument("--token")
     parser.add_argument("--session")
     args = parser.parse_args()
 
     bench_matching()
-    if args.image:
-        bench_embedding(args.image)
-        if args.url and args.token and args.session:
-            bench_endpoint(args.url, args.token, args.session, args.image)
+    if args.url and args.token and args.session:
+        bench_endpoint(args.url, args.token, args.session)

@@ -48,16 +48,10 @@ def create_app():
     app.config.from_object(Config)  # includes MAX_CONTENT_LENGTH (-> 413)
 
     CORS(
-    app,
-    resources={
-        r"/api/*": {
-            "origins": "*",
-            "allow_headers": ["Content-Type", "Authorization"],
-            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        }
-    },
-    supports_credentials=False,
-)
+        app,
+        resources={r"/api/*": {"origins": Config.FRONTEND_ORIGINS}},
+        supports_credentials=True,
+    )
 
     @app.before_request
     def require_json_body():
@@ -83,10 +77,6 @@ def create_app():
         log.error("Database error: %s", error.__class__.__name__, exc_info=True)
         return jsonify({"message": "Database temporarily unavailable"}), 503
 
-    @app.errorhandler(face_recognition.ModelLoading)
-    def handle_model_loading(error):
-        return jsonify({"message": str(error)}), 503
-
     @app.errorhandler(Exception)
     def handle_unexpected_error(error):
         log.exception("Unhandled error")
@@ -101,9 +91,7 @@ def create_app():
         and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
     )
     if not reloader_parent:
-        ensure_indexes()
-        if Config.PRELOAD_MODEL:
-            face_recognition.start_warmup()  # background thread: start-up is not delayed
+        ensure_indexes()  # no model to load: face inference runs in the browser
 
     @app.get("/api/health")
     def health():
@@ -113,6 +101,7 @@ def create_app():
                 "service": "face-attendance-api",
                 "stage": 7,
                 "model": face_recognition.model_status(),
+                "embedding_model": face_recognition.EMBEDDING_MODEL,
                 "face_cache": face_index.stats(),
             }
         )

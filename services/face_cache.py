@@ -25,6 +25,7 @@ from pymongo.errors import PyMongoError
 
 from config import Config
 from database.db import get_db
+from services.face_recognition import EMBEDDING_MODEL
 from services.face_matching import (
     Snapshot,
     build_snapshot,
@@ -119,15 +120,19 @@ class FaceIndex:
 
         def items():
             nonlocal legacy
+            # Only embeddings from the CURRENT model are matched. Older (Facenet)
+            # samples stay in the database untouched until the student is
+            # re-registered, but they never take part in a comparison.
             cursor = db.face_data.find(
-                {}, {"student_id": 1, "embedding": 1, "pipeline_version": 1}
+                {}, {"student_id": 1, "embedding": 1, "model": 1}
             ).batch_size(1000)
             for doc in cursor:
                 label = labels.get(doc.get("student_id"))
                 if label is None:  # inactive or deleted student
                     continue
-                if not doc.get("pipeline_version"):
+                if doc.get("model") != EMBEDDING_MODEL:
                     legacy += 1
+                    continue
                 yield doc["student_id"], label, doc.get("embedding")
 
         snapshot = build_snapshot(items(), version=fingerprint)
@@ -175,6 +180,7 @@ class FaceIndex:
             "loaded": self._loaded,
             "students": snap.student_count,
             "samples": snap.sample_count,
+            "embedding_model": EMBEDDING_MODEL,
             "legacy_samples": self._legacy_samples,
             "skipped_samples": snap.skipped,
             "built_at": self._built_at.isoformat() if self._built_at else None,

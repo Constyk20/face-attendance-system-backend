@@ -1,13 +1,10 @@
-"""Production-style launcher: ONE process, several threads (waitress).
+"""Local / Windows launcher: ONE process, several threads (waitress).
 
-Run:  python serve.py
+Run:  python serve.py        (on Render the start command uses gunicorn instead)
 
-Why one process? Every worker process would load its own copy of the Facenet
-model (hundreds of MB of RAM) and its own embedding cache, and the in-memory
-session state (busy flags, rate limits, "already marked" sets) would no longer
-be shared. Threads share all of that, and the inference lock keeps TensorFlow
-safe. Face recognition is CPU bound, so extra processes would not make a
-laptop faster anyway.
+One process keeps the in-memory face index and the per-session state
+(busy flags, rate limits, "already marked" sets) shared between threads.
+There is no model in this process any more, so it is small and fast to start.
 """
 
 import logging

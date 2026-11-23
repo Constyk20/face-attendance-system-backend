@@ -1,21 +1,12 @@
-Flask==3.0.3
-Flask-CORS==5.0.0
-pymongo==4.9.1
-python-dotenv==1.0.1
-PyJWT==2.9.0
-bcrypt==4.2.0
-gunicorn==21.2.0
-numpy==1.26.4
-opencv-python-headless==4.10.0.84
-tensorflow==2.15.1
-keras==2.15.0
-ml-dtypes==0.3.2
-protobuf==4.25.3
-h5py==3.11.0
-Pillow==10.4.0
-deepface==0.0.93
-retina-face==0.0.17
-gdown==5.2.0
-tqdm==4.66.5
-pandas==2.2.2
-waitress>=3.0
+# Runtime. No TensorFlow, DeepFace, Keras, OpenCV, retina-face or gdown:
+# face detection and embedding run in the browser (ONNX Runtime Web).
+Flask>=3.0,<4
+flask-cors>=4.0,<7
+pymongo>=4.6,<5
+dnspython>=2.4,<3      # needed for mongodb+srv:// (Atlas) URIs
+numpy>=1.26,<3
+bcrypt>=4.1,<6
+PyJWT>=2.8,<3
+python-dotenv>=1.0,<2
+gunicorn>=22,<24       # Render / Linux
+waitress>=3.0,<4       # Windows / local alternative: python serve.py

@@ -12,7 +12,6 @@ import logging
 import re
 from datetime import datetime, timezone
 
-import cv2
 import numpy as np
 from bson import ObjectId
 from flask import Blueprint, jsonify, request
@@ -24,11 +23,10 @@ from routes.auth import roles_required
 from services.face_cache import face_index
 from services.face_matching import consistency_outliers
 from services.face_recognition import (
-    MODEL_NAME,
+    EMBEDDING_MODEL,
     PIPELINE_VERSION,
     FaceError,
-    decode_image,
-    extract_embedding,
+    validate_embedding,
 )
 from utils import clean_text, pagination_meta, parse_object_id, parse_pagination
 
@@ -51,12 +49,21 @@ _PUBLIC_FIELDS = {
     "email": 1,
     "is_active": 1,
     "face_registered": 1,
+    "face_model": 1,
     "created_at": 1,
     "updated_at": 1,
 }
 
 
+def face_status(student):
+    """"registered" (current model) | "needs_reregistration" (old model) | "none"."""
+    if not student.get("face_registered"):
+        return "none"
+    return "registered" if student.get("face_model") == EMBEDDING_MODEL else "needs_reregistration"
+
+
 def public_student(student):
+    status = face_status(student)
     return {
         "id": str(student["_id"]),
         "full_name": student.get("full_name", ""),
@@ -66,7 +73,9 @@ def public_student(student):
         "level": student.get("level", ""),
         "email": student.get("email"),
         "is_active": bool(student.get("is_active", True)),
-        "face_registered": bool(student.get("face_registered", False)),
+        # True only for faces made with the CURRENT model; older ones must be re-registered.
+        "face_registered": status == "registered",
+        "face_status": status,
         "created_at": student.get("created_at"),
         "updated_at": student.get("updated_at"),
     }
@@ -266,21 +275,17 @@ def register_face(user, student_id):
         return jsonify({"message": "Active student not found"}), 404
 
     body = request.get_json(silent=True) or {}
-    images = body.get("images")
-    if not isinstance(images, list) or len(images) < 3 or len(images) > 8:
-        return jsonify({"message": "Send between 3 and 8 facial images"}), 400
+    raw = body.get("embeddings")
+    if not isinstance(raw, list) or len(raw) < 3 or len(raw) > 8:
+        return jsonify({"message": "Send between 3 and 8 face captures"}), 400
 
-    # 1. One embedding per image. Exactly one clear face is required in each.
+    # 1. Validate every embedding (the browser did detection; exactly one face per capture).
     embeddings = []
-    for index, image_value in enumerate(images, start=1):
+    for index, value in enumerate(raw, start=1):
         try:
-            image = decode_image(image_value)
-            embeddings.append(extract_embedding(image, policy="single"))
+            embeddings.append(validate_embedding(value, body.get("model")))
         except FaceError as exc:
-            return jsonify({"message": f"Image {index}: {exc}"}), 400
-        except (cv2.error, ValueError):
-            log.exception("Registration image %d could not be processed", index)
-            return jsonify({"message": f"Image {index} could not be processed"}), 400
+            return jsonify({"message": f"Capture {index}: {exc}"}), 400
 
     # 2. All images must show the same person.
     outliers = consistency_outliers(embeddings, Config.FACE_DISTANCE_THRESHOLD)
@@ -305,7 +310,7 @@ def register_face(user, student_id):
             {
                 "student_id": object_id,
                 "embedding": np.asarray(embedding, dtype=np.float32).tolist(),
-                "model": MODEL_NAME,
+                "model": EMBEDDING_MODEL,
                 "pipeline_version": PIPELINE_VERSION,
                 "batch_id": batch_id,
                 "created_at": now,
@@ -313,10 +318,16 @@ def register_face(user, student_id):
             for embedding in embeddings
         ]
     )
-    db.face_data.delete_many({"student_id": object_id, "batch_id": {"$ne": batch_id}})
+    # Replaced samples are copied to face_data_legacy first (nothing is lost silently).
+    old = list(db.face_data.find({"student_id": object_id, "batch_id": {"$ne": batch_id}}))
+    if old:
+        db.face_data_legacy.insert_many(
+            [{**doc, "archived_at": now, "archived_by": str(user.get("_id", user.get("id", "")))} for doc in old]
+        )
+        db.face_data.delete_many({"_id": {"$in": [doc["_id"] for doc in old]}})
     db.students.update_one(
         {"_id": object_id},
-        {"$set": {"face_registered": True, "updated_at": now}},
+        {"$set": {"face_registered": True, "face_model": EMBEDDING_MODEL, "updated_at": now}},
     )
     face_index.invalidate()
     log.info("Registered %d face samples for student %s", len(embeddings), object_id)

@@ -1,0 +1,30 @@
+# Render Blueprint (Free web service). Create it with: New + > Blueprint.
+services:
+  - type: web
+    name: face-attendance-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # ONE worker with threads: shared in-memory face index and session state,
+    # and the smallest possible RAM use (free tier = 512 MB, 0.1 CPU).
+    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 60 --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MONGODB_URI
+        sync: false            # paste your Atlas connection string in the dashboard
+      - key: MONGODB_DB_NAME
+        value: face_attendance
+      - key: FRONTEND_ORIGIN
+        sync: false            # your Vercel URL, e.g. https://your-app.vercel.app
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: EMBEDDING_MODEL
+        value: sface-yunet-v1
+      - key: FACE_DISTANCE_THRESHOLD
+        value: "0.50"

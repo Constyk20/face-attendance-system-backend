@@ -1,9 +1,13 @@
-"""Match one webcam frame to a registered student (no database work per frame)."""
+"""Match one face embedding (computed in the browser) to a registered student.
+
+No image processing and no neural network here: validation, then one
+matrix-vector product against the in-memory index of enrolled embeddings.
+"""
 
 from dataclasses import dataclass
 
 from services.face_cache import face_index
-from services.face_recognition import decode_image, extract_embedding
+from services.face_recognition import validate_embedding
 
 
 @dataclass
@@ -14,11 +18,9 @@ class Outcome:
     message: str = ""
 
 
-def identify_frame(image_value):
-    """Decode, embed and match. Raises FaceError for unusable images."""
-    image = decode_image(image_value)
-    # "dominant": use the largest face, reject frames with two similar-sized faces.
-    embedding = extract_embedding(image, policy="dominant")
+def identify_embedding(embedding_value, model):
+    """Validate and match. Raises FaceError for malformed data or a model mismatch."""
+    embedding = validate_embedding(embedding_value, model)
 
     snapshot, result = face_index.match(embedding)
     if result.status == "match":

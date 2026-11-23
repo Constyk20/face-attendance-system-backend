@@ -10,7 +10,7 @@ GET /api/reports/dashboard
 import csv
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, Response, jsonify, request
 
@@ -87,7 +87,23 @@ def dashboard(user):
     allowed = lecturer_course_ids(user)
     is_admin = allowed is None
     course_match = {} if is_admin else {"course_id": {"$in": allowed}}
-    today = datetime.now(timezone.utc).date().isoformat()
+    today_date = datetime.now(timezone.utc).date()
+    day_strings = [
+        (today_date - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)
+    ]
+
+    # Present marks per day for the last 7 days (also gives "present today").
+    weekly_counts = {
+        row["_id"]: row["count"]
+        for row in db.attendance_records.aggregate(
+            [
+                {"$match": {"date": {"$in": day_strings}, **course_match}},
+                {"$group": {"_id": "$date", "count": {"$sum": 1}}},
+            ]
+        )
+    }
+    weekly = [{"date": day, "present": weekly_counts.get(day, 0)} for day in day_strings]
+    present_today = weekly[-1]["present"]
 
     # Total and active sessions in ONE aggregation instead of two counts.
     session_stats = list(
@@ -110,7 +126,6 @@ def dashboard(user):
     recent = list(
         db.attendance_records.find(course_match, _RECORD_FIELDS).sort("created_at", -1).limit(10)
     )
-    present_today = db.attendance_records.count_documents({"date": today, **course_match})
     total_students = db.students.count_documents({"is_active": True})
     if is_admin:
         total_lecturers = db.users.count_documents({"role": "lecturer", "is_active": True})
@@ -129,6 +144,7 @@ def dashboard(user):
                 "active_sessions": active_sessions,
                 "present_today": present_today,
             },
+            "weekly": weekly,
             "recent_activity": [
                 {
                     "id": str(row["_id"]),
